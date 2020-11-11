@@ -68,7 +68,7 @@ you can specify them in $HOME/.gelget for gelget to automatically
 retrieve them at runtime
 
 examples:
-gelget -S --tags "izumi_konata 1girl" -e "swimsuit"
+gelget -S --tags "izumi_konata 1girl" -e "feet"
 EOT
 	say "gelget version $version";
 	print $help_message;
