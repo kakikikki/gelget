@@ -195,7 +195,7 @@ sub url_construct {
 		$tag_list .= $excluded_tags;		# will know that we don't want that tag
 	}
 	else {
-		$tag_list .= $excluded_tags;
+		$tag_list .= $excluded_tags unless not defined $excluded_tags;
 	}
 
 
