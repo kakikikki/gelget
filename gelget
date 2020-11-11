@@ -259,7 +259,9 @@ if ($pages) {
 	}
 }
 else {
-	$total_images = $limit;
+	if ($total_images > $limit) {
+		$total_images = $limit;
+	}
 	&download;
 }
 say "\nDownload complete!";
