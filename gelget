@@ -1,0 +1,265 @@
+#!/usr/bin/env perl
+my $version = "1.0";
+
+use v5.30;
+use strict;
+use warnings;
+use File::HomeDir;
+use File::Fetch;
+use Getopt::Long;
+use XML::Twig;
+
+# Options
+my $limit = '1000';		# default values if user didn't specify anything
+my $page = '0';
+Getopt::Long::Configure (
+	"gnu_getopt",
+);
+GetOptions (
+	'help|h'		=> \&help,
+	'version|v'		=> \&version,
+	'number|n'		=> \&number,
+	'quiet|q'		=> \my $quiet,
+	'tags|t=s'		=> \my $tags,
+	'excluded-tags|e=s'	=> \my $excluded_tags,
+	'safe|S'		=> \my $safe,
+	'questionable|Q'	=> \my $questionable,
+	'explicit|E'		=> \my $explicit,
+	'limit|l=i'		=> \$limit,
+	'page|p=i'		=> \$page,
+	'pages=s'		=> \my $pages,
+	'api-key|a=s'		=> \my $api_key,
+	'user-id|u=s'		=> \my $user_id,
+);
+
+sub version {
+	say "gelget version $version";
+	exit;
+}
+
+sub number {
+	say &image_count;
+	exit;
+}
+
+sub help {
+my $help_message = <<'EOT';
+usage:
+	-h --help		show this menu and exit
+	-v --version		show version and exit
+	-n --number		show only the amount of images that query will match and exit
+	-q --quiet		suppress some messages from showing up
+	-t --tags		tags to include in query
+	-e --excluded_tags	tags to exclude from query
+	-S --safe		equivalent of --tags "rating:safe"
+	-Q --questionable	equivalent of --tags "rating:questionable"
+	-E --explicit		equivalent of --tags "rating:explicit"
+	-l --limit		maximum number of images to include in query
+	-p --page		page to get results from, essentially works as an offset
+	--pages			download images from page 0 till specified
+	-a --api-key		set api_key to use in query
+	-u --user-id		set user_id to use in query
+
+default limit is set to 1000 and page is set to 0
+
+api_key and user_id are optional but without them
+some tags might not be searchable such as loli or shota
+you can specify them in $HOME/.gelget for gelget to automatically
+retrieve them at runtime
+
+examples:
+gelget -S --tags "izumi_konata 1girl" -e "swimsuit"
+EOT
+	say "gelget version $version";
+	print $help_message;
+	exit;
+}
+
+# Configuration file for convenience
+my $config_file = File::HomeDir->my_home . "/.gelget";
+if ( -e $config_file ) {
+	open my $config, '<', $config_file or die "Can't open configuration file $!";
+	while (<$config>) {
+		if (/api_key/) {
+			$api_key = $_ =~ s/api_key=//r;
+			chomp $api_key;
+			}
+		if (/user_id/) {
+			$user_id = $_ =~ s/user_id=//r;
+			chomp $user_id;
+			}
+	}
+}
+else {
+my $config_message = <<'EOT';
+No configuration file found in user home directory!
+You might want to create it in $HOME/.gelget for
+gelget to automatically get your api_key and user_id.
+valid options currently are:
+api_key=$your_api_key
+user_id=$your_user_id
+
+You can retrieve them form your account settings on gelbooru:
+https://gelbooru.com/index.php?page=account&s=options
+
+If you would like for this message to not show up in the future
+and don't want to create an account on gelbooru
+set both api_key and user_id as empty in the configuration file
+api_key=
+user_id=
+Alternatively simply use --quiet or -q to suppress this message
+EOT
+print $config_message unless $quiet;
+}
+
+my $total_images = &image_count;
+my $downloaded = 0;
+
+
+# build up url that we can send to gelbooru and hopefully get something meaningful back
+sub url_construct {
+	# Base URL that we'll be appending stuff to
+	my $url = 'https://gelbooru.com/index.php?page=dapi&s=post&q=index';
+
+	# First we append api_key and user_id if they exist
+	# only needed with certain tags but it doesn't hurt to add it
+	if ($api_key) {
+		$url .= "&api_key=$api_key";
+	}
+	if ($user_id) {
+		$url .= "&user_id=$user_id";
+	}
+
+
+	# Set limit of images to return user can set any amount and defaults to 1000 otherwise
+	if ($limit < 0 || $limit > 1000) {
+		# Gelbooru returns any value over 1000 as 1000 anyway but warn user so they know what's going on
+		# obviously we want to warn if value is negative but 0 is useful for getting total amount of images
+		# without downloading more then necessary
+		warn "Specified limit is incorrect, defaulting to 1000";
+		$url .= "&limit=1000";
+	}
+	# set default limit if no or wrong was found in input
+	else {
+		$url .= "&limit=$limit";
+	}
+
+	# add page to query, used to download more then limit allows
+	if ($page) {
+		$url .= "&pid=$page";
+	}
+	else {
+		$url .= "&pid=0";
+	}
+
+	# Catch if user inputed multiple ratings
+	if (	($safe && $questionable)
+		|| ($safe && $explicit)
+		|| ($questionable && $explicit)) {
+		die "Multiple ratings specified, query will return empty\nTerminating early to save time";
+	}
+
+
+	# Tags
+	my $tag_list = "&tags=";
+
+	# Add specified rating to &tags
+	# Note they are mutually exclusive
+	if ($safe) {
+		$tag_list .= "rating%3asafe+"
+	}
+	if ($questionable) {
+		$tag_list .= "rating%3aquestionable+"
+	}
+	if ($explicit) {
+		$tag_list .= "rating%3aexplicit+"
+	}
+
+	# Add user-specified tags
+	if ($tags) {
+		$tags =~ s/\:/%3a/g;			# In case user specified rating manually
+		$tags =~ s/\ /+/g;			# Replace spaces with + for query
+		$tag_list .= $tags;
+	}
+
+	# Excluded tags for convenience
+	if ($excluded_tags && $excluded_tags =~ /^(?!\+-)/) {
+		if ($tags) {
+			$excluded_tags =~ s/^/+-/;	# Only if there is at least one tag add +
+		}					# otherwise it's not valid
+		else {
+			$excluded_tags =~ s/^/-/g;
+		}
+		$excluded_tags =~ s/\:/%3a/g;		# The same as in normal tags
+		$excluded_tags =~ s/\ /+-/g;		# add - in front of everything so gelbooru
+		$tag_list .= $excluded_tags;		# will know that we don't want that tag
+	}
+	else {
+		$tag_list .= $excluded_tags;
+	}
+
+
+	$url .= $tag_list;				# append formatted tags to url
+	return $url;
+}
+
+sub image_count {
+	# Download xml from gelbooru, conveniently they list count in the
+	# root of the XML so we don't have to count it ourselves simple
+	# parse wil do
+	my $tmp_limit = $limit;				# save limit into tmp scalar
+	$limit = 0;					# set limit to 0 to download a smaller XML
+	my $xml_url = &url_construct;			# construct url with only header
+	$limit = $tmp_limit;				# set it back to original
+	my $xml;
+
+	my $ff = File::Fetch->new( uri => $xml_url )->fetch( to => \$xml )
+		or die "Can't download $xml_url";	# Download and save XML into scalar
+
+	my $twig = new XML::Twig;			# create parse object
+	$twig->parse($xml);				# begin parse, for files use parsefile
+	my $root = $twig->root;				# get to the root of the xml which is "posts"
+	my $post_count = $root->att('count');		# read the attribute
+
+	return $post_count;				# return it back
+}
+
+
+# Download and save files
+sub download {
+	my $xml_url = &url_construct;
+	my $xml;
+	my $ff = File::Fetch->new( uri => $xml_url )->fetch( to => \$xml )
+			or die "Can't download $xml_url";
+	my $twig = new XML::Twig;
+
+	$twig->parse($xml);
+	my $root = $twig->root;
+	my @posts = $root->children;
+
+	foreach my $post (@posts) {
+		my $file_url = $post->att('file_url');
+		my $file_name = $file_url =~ s/.*\///r;
+		printf ("\rDownloading file %d/%d", $downloaded++, $total_images);
+		my $ff = File::Fetch->new(uri => $file_url)->fetch()
+			or die "Can't download file";
+		printf ("\rDownloading file %d/%d", $downloaded, $total_images);
+	}
+}
+
+# Download loop
+if ($pages) {
+	# Pages start from 0 that's why we have to add 1 to get correct amount
+	if ($total_images > ($pages+1) * $limit) {
+		$total_images = ($pages+1) * $limit;
+	}
+	while ($page <= $pages) {
+		&download;
+		$page ++;
+	}
+}
+else {
+	$total_images = $limit;
+	&download;
+}
+say "\nDownload complete!";
