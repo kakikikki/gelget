@@ -10,6 +10,7 @@ Gelget is a gelbooru scrapper with a modest set of features. It can automaticall
 * perl5 (tested on 5.30.3)
 * File::HomeDir
 * File::Fetch
+* File::Find
 * Getopt::Long
 * XML::Twig (tested on 3.520)
 
