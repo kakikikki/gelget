@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-my $version = "1.1";
+my $version = "1.2";
 
 use v5.30;
 use strict;
@@ -8,6 +8,7 @@ use File::HomeDir;
 use File::Fetch;
 use Getopt::Long;
 use XML::Twig;
+use File::Find;
 
 # Options
 my $limit = '1000';		# default values if user didn't specify anything
@@ -19,6 +20,7 @@ GetOptions (
 	'help|h'		=> \&help,
 	'version|v'		=> \&version,
 	'number|n'		=> \&number,
+	'overwrite|o'		=> \my $overwrite,
 	'quiet|q'		=> \my $quiet,
 	'tags|t=s'		=> \my $tags,
 	'excluded-tags|e=s'	=> \my $excluded_tags,
@@ -48,6 +50,7 @@ usage:
 	-h --help               show this menu and exit
 	-v --version            show version and exit
 	-n --number             show only the amount of images that query will match and exit
+	-o --overwrite		overwrite downloaded images instead of skipping over them
 	-q --quiet              suppress some messages from showing up
 	-t --tags               tags to include in query
 	-e --excluded_tags      tags to exclude from query
@@ -224,9 +227,19 @@ sub image_count {
 	return $post_count;				# return it back
 }
 
+my @local_files;					# needs to be accessed by download function
+sub local_files {
+	my $tmp = $File::Find::name;
+	$tmp =~ s/\.\///;				# cut ./ from files name
+	push @local_files, $tmp;
+}
 
 # Download and save files
 sub download {
+	@local_files = '';
+	find( \&local_files, '.' );			# find local files
+	my %local_files = map { $_ => 1 } @local_files;	# convert array into hash
+
 	my $xml_url = &url_construct;
 	my $xml;
 	my $ff = File::Fetch->new( uri => $xml_url )->fetch( to => \$xml )
@@ -240,9 +253,12 @@ sub download {
 	foreach my $post (@posts) {
 		my $file_url = $post->att('file_url');
 		my $file_name = $file_url =~ s/.*\///r;
+
 		printf ("\rDownloading file %d/%d", $downloaded++, $total_images);
-		my $ff = File::Fetch->new(uri => $file_url)->fetch()
-			or die "Can't download file";
+		if (not exists $local_files{$file_name} or $overwrite) {
+			my $ff = File::Fetch->new(uri => $file_url)->fetch()
+				or die "Can't download file";
+		}
 		printf ("\rDownloading file %d/%d", $downloaded, $total_images);
 	}
 }

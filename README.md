@@ -30,6 +30,7 @@ into file called .gelget in your home directory
 	-h --help               show this menu and exit
 	-v --version            show version and exit
 	-n --number             show only the amount of images that query will match and exit
+	-o --overwrite		overwrite downloaded images instead of skipping over them
 	-q --quiet              suppress some messages from showing up
 	-t --tags               tags to include in query
 	-e --excluded_tags      tags to exclude from query
