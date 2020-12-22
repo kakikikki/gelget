@@ -305,8 +305,8 @@ else {
 }
 
 # Tell user about download errors
-if ($skip_on_fail) {
-    say "These are the files that failed to download:";
+if ($skip_on_fail && %failed_downloads) {
+    say "\nThese are the files that failed to download:";
     while ((my $key, my $value) = each %failed_downloads) {
         say "$key => $value";
     }
