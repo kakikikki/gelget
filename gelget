@@ -1,5 +1,5 @@
 #!/usr/bin/env perl
-my $version = "1.2";
+my $version = "1.3";
 
 use v5.30;
 use strict;
@@ -11,41 +11,43 @@ use XML::Twig;
 use File::Find;
 
 # Options
-my $limit = '1000';		# default values if user didn't specify anything
-my $page = '0';
-Getopt::Long::Configure (
-	"gnu_getopt",
-);
-GetOptions (
-	'help|h'		=> \&help,
-	'version|v'		=> \&version,
-	'number|n'		=> \&number,
-	'overwrite|o'		=> \my $overwrite,
-	'quiet|q'		=> \my $quiet,
-	'tags|t=s'		=> \my $tags,
-	'excluded-tags|e=s'	=> \my $excluded_tags,
-	'safe|S'		=> \my $safe,
-	'questionable|Q'	=> \my $questionable,
-	'explicit|E'		=> \my $explicit,
-	'limit|l=i'		=> \$limit,
-	'page|p=i'		=> \$page,
-	'pages=s'		=> \my $pages,
-	'api-key|a=s'		=> \my $api_key,
-	'user-id|u=s'		=> \my $user_id,
+my $limit = '1000';    # default values if user didn't specify anything
+my $page  = '0';
+Getopt::Long::Configure( "gnu_getopt", );
+GetOptions(
+    'help|h'            => \&help,
+    'version|v'         => \&version,
+    'number|n'          => \&number,
+    'overwrite|o'       => \my $overwrite,
+    'quiet|q'           => \my $quiet,
+    'tags|t=s'          => \my $tags,
+    'excluded-tags|e=s' => \my $excluded_tags,
+    'safe|S'            => \my $safe,
+    'questionable|Q'    => \my $questionable,
+    'explicit|E'        => \my $explicit,
+    'no-safe'           => \my $no_safe,
+    'no-questionable'   => \my $no_questionable,
+    'no-explicit'       => \my $no_explicit,
+    'limit|l=i'         => \$limit,
+    'page|p=i'          => \$page,
+    'skip-on-fail'      => \my $skip_on_fail,
+    'pages=s'           => \my $pages,
+    'api-key|a=s'       => \my $api_key,
+    'user-id|u=s'       => \my $user_id,
 );
 
 sub version {
-	say "gelget version $version";
-	exit;
+    say "gelget version $version";
+    exit;
 }
 
 sub number {
-	say &image_count;
-	exit;
+    say &image_count;
+    exit;
 }
 
 sub help {
-my $help_message = <<'EOT';
+    my $help_message = <<'EOT';
 usage:
 	-h --help               show this menu and exit
 	-v --version            show version and exit
@@ -73,28 +75,29 @@ retrieve them at runtime
 examples:
 gelget -S --tags "izumi_konata 1girl" -e "feet"
 EOT
-	say "gelget version $version";
-	print $help_message;
-	exit;
+    say "gelget version $version";
+    print $help_message;
+    exit;
 }
 
 # Configuration file for convenience
 my $config_file = File::HomeDir->my_home . "/.gelget";
 if ( -e $config_file ) {
-	open my $config, '<', $config_file or die "Can't open configuration file $!";
-	while (<$config>) {
-		if (/api_key/) {
-			$api_key = $_ =~ s/api_key=//r;
-			chomp $api_key;
-			}
-		if (/user_id/) {
-			$user_id = $_ =~ s/user_id=//r;
-			chomp $user_id;
-			}
-	}
+    open my $config, '<', $config_file
+        or die "Can't open configuration file $!";
+    while (<$config>) {
+        if (/api_key/) {
+            $api_key = $_ =~ s/api_key=//r;
+            chomp $api_key;
+        }
+        if (/user_id/) {
+            $user_id = $_ =~ s/user_id=//r;
+            chomp $user_id;
+        }
+    }
 }
 else {
-my $config_message = <<'EOT';
+    my $config_message = <<'EOT';
 No configuration file found in user home directory!
 You might want to create it in $HOME/.gelget for
 gelget to automatically get your api_key and user_id.
@@ -112,172 +115,200 @@ api_key=
 user_id=
 Alternatively simply use --quiet or -q to suppress this message
 EOT
-print $config_message unless $quiet;
+    print $config_message unless $quiet;
 }
 
 my $total_images = &image_count;
-my $downloaded = 0;
-
+my $downloaded   = 0;
 
 # build up url that we can send to gelbooru and hopefully get something meaningful back
 sub url_construct {
-	# Base URL that we'll be appending stuff to
-	my $url = 'https://gelbooru.com/index.php?page=dapi&s=post&q=index';
 
-	# First we append api_key and user_id if they exist
-	# only needed with certain tags but it doesn't hurt to add it
-	if ($api_key) {
-		$url .= "&api_key=$api_key";
-	}
-	if ($user_id) {
-		$url .= "&user_id=$user_id";
-	}
+   # Base URL that we'll be appending stuff to
+    my $url = 'https://gelbooru.com/index.php?page=dapi&s=post&q=index';
 
+    # First we append api_key and user_id if they exist
+    # only needed with certain tags but it doesn't hurt to add it
+    if ($api_key) {
+        $url .= "&api_key=$api_key";
+    }
+    if ($user_id) {
+        $url .= "&user_id=$user_id";
+    }
 
-	# Set limit of images to return user can set any amount and defaults to 1000 otherwise
-	if ($limit < 0 || $limit > 1000) {
-		# Gelbooru returns any value over 1000 as 1000 anyway but warn user so they know what's going on
-		# obviously we want to warn if value is negative but 0 is useful for getting total amount of images
-		# without downloading more then necessary
-		warn "Specified limit is incorrect, defaulting to 1000";
-		$url .= "&limit=1000";
-	}
-	# set default limit if no or wrong was found in input
-	else {
-		$url .= "&limit=$limit";
-	}
+    # Set limit of images to return user can set any amount and defaults to 1000 otherwise
+    if ( $limit < 0 || $limit > 1000 ) {
+        # Gelbooru returns any value over 1000 as 1000 anyway
+        # but warn user so they know what's going on
+        # obviously we want to warn if value is negative but 0
+        # is useful for getting total amount of images
+        # without downloading more then necessary
+        warn "Specified limit is incorrect, defaulting to 1000";
+        $url .= "&limit=1000";
+    }
+    else {
+        $url .= "&limit=$limit";
+    }
 
-	# add page to query, used to download more then limit allows
-	if ($page) {
-		$url .= "&pid=$page";
-	}
-	else {
-		$url .= "&pid=0";
-	}
+    # Add page to query, used to download more then limit allows
+    if ($page) {
+        $url .= "&pid=$page";
+    }
+    else {
+        $url .= "&pid=0";
+    }
 
-	# Catch if user inputed multiple ratings
-	if (	($safe && $questionable)
-		|| ($safe && $explicit)
-		|| ($questionable && $explicit)) {
-		die "Multiple ratings specified, query will return empty\nTerminating early to save time";
-	}
+    # Catch if user inputed multiple ratings
+    if (   ( $safe && $questionable )
+        || ( $safe && $explicit )
+        || ( $questionable && $explicit )
+        || ( $safe && $no_safe )
+        || ( $questionable && $no_questionable )
+        || ( $explicit && $no_explicit ) )
+    {
+        die "Multiple ratings specified, query will return empty\nTerminating early to save time";
+    }
 
+    # Tags
+    my $tag_list = "&tags=";
 
-	# Tags
-	my $tag_list = "&tags=";
+    # Add specified rating to &tags
+    if ($safe) {
+        $tag_list .= "rating%3asafe+";
+    }
+    if ($questionable) {
+        $tag_list .= "rating%3aquestionable+";
+    }
+    if ($explicit) {
+        $tag_list .= "rating%3aexplicit+";
+    }
+    if ($no_safe) {
+        $tag_list .= "-rating%3asafe+";
+    }
+    if ($no_questionable) {
+        $tag_list .= "-rating%3aquestionable+";
+    }
+    if ($no_explicit) {
+        $tag_list .= "-rating%3aexplicit+";
+    }
 
-	# Add specified rating to &tags
-	# Note they are mutually exclusive
-	if ($safe) {
-		$tag_list .= "rating%3asafe+"
-	}
-	if ($questionable) {
-		$tag_list .= "rating%3aquestionable+"
-	}
-	if ($explicit) {
-		$tag_list .= "rating%3aexplicit+"
-	}
+    # Add user-specified tags
+    if ($tags) {
+        $tags =~ s/\:/%3a/g;    # In case user specified rating manually
+        $tags =~ s/\ /+/g;      # Replace spaces with + for query
+        $tag_list .= $tags;
+    }
 
-	# Add user-specified tags
-	if ($tags) {
-		$tags =~ s/\:/%3a/g;			# In case user specified rating manually
-		$tags =~ s/\ /+/g;			# Replace spaces with + for query
-		$tag_list .= $tags;
-	}
+    # Excluded tags for convenience
+    if ( $excluded_tags && $excluded_tags =~ /^(?!\+-)/ ) {
+        if ($tags) {
+            $excluded_tags =~ s/^/+-/; # Only if there is at least one tag add +
+        }    # otherwise it's invalid syntax
+        else {
+            $excluded_tags =~ s/^/-/g;
+        }
+        $excluded_tags =~ s/\:/%3a/g; # The same as in normal tags
+        $excluded_tags =~ s/\ /+-/g;  # add - in front of everything so gelbooru
+        $tag_list .= $excluded_tags;  # will know that we want that tag excluded
+    }
+    else {
+        $tag_list .= $excluded_tags unless not defined $excluded_tags;
+    }
 
-	# Excluded tags for convenience
-	if ($excluded_tags && $excluded_tags =~ /^(?!\+-)/) {
-		if ($tags) {
-			$excluded_tags =~ s/^/+-/;	# Only if there is at least one tag add +
-		}					# otherwise it's not valid
-		else {
-			$excluded_tags =~ s/^/-/g;
-		}
-		$excluded_tags =~ s/\:/%3a/g;		# The same as in normal tags
-		$excluded_tags =~ s/\ /+-/g;		# add - in front of everything so gelbooru
-		$tag_list .= $excluded_tags;		# will know that we don't want that tag
-	}
-	else {
-		$tag_list .= $excluded_tags unless not defined $excluded_tags;
-	}
-
-
-	$url .= $tag_list;				# append formatted tags to url
-	return $url;
+    $url .= $tag_list;                # append formatted tags to url
+    return $url;
 }
 
 sub image_count {
-	# Download xml from gelbooru, conveniently they list count in the
-	# root of the XML so we don't have to count it ourselves simple
-	# parse wil do
-	my $tmp_limit = $limit;				# save limit into tmp scalar
-	$limit = 0;					# set limit to 0 to download a smaller XML
-	my $xml_url = &url_construct;			# construct url with only header
-	$limit = $tmp_limit;				# set it back to original
-	my $xml;
 
-	my $ff = File::Fetch->new( uri => $xml_url )->fetch( to => \$xml )
-		or die "Can't download $xml_url";	# Download and save XML into scalar
+    # Download xml from gelbooru, conveniently they list count in the
+    # root of the XML so we don't have to count it ourselves simple
+    # parse wil do
+    my $tmp_limit = $limit;          # save limit into tmp scalar
+    $limit = 0;                      # set limit to 0 to download a smaller XML
+    my $xml_url = &url_construct;    # construct url with only header
+    $limit = $tmp_limit;             # set it back to original
+    my $xml;
 
-	my $twig = new XML::Twig;			# create parse object
-	$twig->parse($xml);				# begin parse, for files use parsefile
-	my $root = $twig->root;				# get to the root of the xml which is "posts"
-	my $post_count = $root->att('count');		# read the attribute
+    my $ff = File::Fetch->new( uri => $xml_url )->fetch( to => \$xml )
+      or die "Can't download $xml_url $!";    # Download and save XML into scalar
 
-	return $post_count;				# return it back
+    my $twig = new XML::Twig;    # create parse object
+    $twig->parse($xml);          # begin parse, for files use parsefile
+    my $root = $twig->root;      # get to the root of the xml which is "posts"
+    my $post_count = $root->att('count');    # read the attribute
+
+    return $post_count;                      # return it back
 }
 
-my @local_files;					# needs to be accessed by download function
+my @local_files;    # needs to be accessed by download function
+my %failed_downloads;
+
 sub local_files {
-	my $tmp = $File::Find::name;
-	$tmp =~ s/\.\///;				# cut ./ from files name
-	push @local_files, $tmp;
+    my $tmp = $File::Find::name;
+    $tmp =~ s/\.\///;    # cut ./ from files name
+    push @local_files, $tmp;
 }
 
 # Download and save files
 sub download {
-	@local_files = '';
-	find( \&local_files, '.' );			# find local files
-	my %local_files = map { $_ => 1 } @local_files;	# convert array into hash
+    @local_files = '';
+    find( \&local_files, '.' );    # find local files
+    my %local_files = map { $_ => 1 } @local_files;    # convert array into hash
 
-	my $xml_url = &url_construct;
-	my $xml;
-	my $ff = File::Fetch->new( uri => $xml_url )->fetch( to => \$xml )
-			or die "Can't download $xml_url";
-	my $twig = new XML::Twig;
+    my $xml_url = &url_construct;
+    my $xml;
+    my $ff = File::Fetch->new( uri => $xml_url )->fetch( to => \$xml )
+      or die "Can't download $xml_url";
+    my $twig = new XML::Twig;
 
-	$twig->parse($xml);
-	my $root = $twig->root;
-	my @posts = $root->children;
+    $twig->parse($xml);
+    my $root  = $twig->root;
+    my @posts = $root->children;
 
-	foreach my $post (@posts) {
-		my $file_url = $post->att('file_url');
-		my $file_name = $file_url =~ s/.*\///r;
+    foreach my $post (@posts) {
+        my $file_url  = $post->att('file_url');
+        my $file_name = $file_url =~ s/.*\///r;
 
-		printf ("\rDownloading file %d/%d", $downloaded++, $total_images);
-		if (not exists $local_files{$file_name} or $overwrite) {
-			my $ff = File::Fetch->new(uri => $file_url)->fetch()
-				or die "Can't download file";
-		}
-		printf ("\rDownloading file %d/%d", $downloaded, $total_images);
-	}
+        printf( "\rDownloading file %d/%d", $downloaded++, $total_images );
+        if ( not exists $local_files{$file_name} or $overwrite ) {
+            if ($skip_on_fail) {
+                my $ff = File::Fetch->new( uri => $file_url )->fetch() or
+                  warn "Error occured while downloading $file_name, resuming..."
+            }
+            else {
+                my $ff = File::Fetch->new( uri => $file_url )->fetch() or
+                  die "Can't download file $file_name at $file_url";
+            };
+        }
+        printf( "\rDownloading file %d/%d", $downloaded, $total_images );
+    }
 }
 
 # Download loop
 if ($pages) {
-	# Pages start from 0 that's why we have to add 1 to get correct amount
-	if ($total_images > ($pages+1) * $limit) {
-		$total_images = ($pages+1) * $limit;
-	}
-	while ($page <= $pages) {
-		&download;
-		$page ++;
-	}
+
+    # Pages start from 0 that's why we have to add 1 to get correct amount
+    if ( $total_images > ( $pages + 1 ) * $limit ) {
+        $total_images = ( $pages + 1 ) * $limit;
+    }
+    while ( $page <= $pages ) {
+        &download;
+        $page++;
+    }
 }
 else {
-	if ($total_images > $limit) {
-		$total_images = $limit;
-	}
-	&download;
+    if ( $total_images > $limit ) {
+        $total_images = $limit;
+    }
+    &download;
+}
+
+# Tell user about download errors
+if ($skip_on_fail) {
+    say "These are the files that failed to download:";
+    while ((my $key, my $value) = each %failed_downloads) {
+        say "$key => $value";
+    }
 }
 say "\nDownload complete!";
